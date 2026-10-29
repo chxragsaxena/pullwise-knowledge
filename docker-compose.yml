@@ -1,0 +1,49 @@
+# The knowledge service and its own database (PostgreSQL with pgvector).
+#
+#   cp .env.example .env     # set POSTGRES_PASSWORD, COHERE_API_KEY, JWT_SECRET
+#   docker compose up -d --build
+#
+# The service listens on 127.0.0.1:8081. The database is not published at all:
+# only the service can reach it, over the compose network.
+#
+# For mutual TLS, generate certificates (go run ./cmd/devcerts -out certs), then
+# add to the knowledge service's environment:
+#   TLS_CERT_FILE: /certs/server.pem
+#   TLS_KEY_FILE: /certs/server-key.pem
+#   TLS_CLIENT_CA_FILE: /certs/ca.pem
+# and mount ./certs at /certs (read-only).
+
+name: pullwise-knowledge
+
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: knowledge
+      POSTGRES_DB: knowledge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledge -d knowledge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  knowledge:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://knowledge:${POSTGRES_PASSWORD}@db:5432/knowledge?sslmode=disable
+      COHERE_API_KEY: ${COHERE_API_KEY:?Set COHERE_API_KEY in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ADDR: ":8081"
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
