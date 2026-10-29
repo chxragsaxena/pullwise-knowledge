@@ -1,6 +1,4 @@
-// Package tlsutil builds TLS configurations for the service, optionally with
-// mutual TLS: the server then also demands a client certificate signed by a
-// trusted CA, so only callers holding one can even open a connection.
+// Package tlsutil builds TLS configurations, optionally with mutual TLS.
 package tlsutil
 
 import (
@@ -11,8 +9,7 @@ import (
 	"os"
 )
 
-// ServerConfig returns a TLS config for the server. If clientCAFile is set,
-// every client must present a certificate signed by that CA (mutual TLS).
+// ServerConfig returns a server TLS config; clientCAFile, if set, requires client certs.
 func ServerConfig(certFile, keyFile, clientCAFile string) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
@@ -30,8 +27,7 @@ func ServerConfig(certFile, keyFile, clientCAFile string) (*tls.Config, error) {
 	return cfg, nil
 }
 
-// ClientConfig returns a TLS config for a caller: it trusts only the given CA
-// for the server, and presents its own certificate if certFile is set.
+// ClientConfig returns a client TLS config trusting only the given CA.
 func ClientConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 	pool, err := loadPool(caFile)
 	if err != nil {

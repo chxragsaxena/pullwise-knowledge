@@ -10,16 +10,13 @@ import (
 	"time"
 )
 
-// Cohere's docs recommend embed-v5.0-pro for indexing and embed-v5.0-fast for
-// queries; the two share an embedding space.
+// Default Cohere models; they share an embedding space.
 const (
 	DefaultCohereDocumentModel = "embed-v5.0-pro"
 	DefaultCohereQueryModel    = "embed-v5.0-fast"
 )
 
-// maxTextsPerCall is Cohere's documented limit for one Embed request. Trial
-// keys are also capped at 1,000 calls a month, so batching to the maximum is
-// what makes the free tier go a long way.
+// maxTextsPerCall is Cohere's documented limit for one Embed request.
 const maxTextsPerCall = 96
 
 const cohereDefaultBaseURL = "https://api.cohere.com"
@@ -84,8 +81,7 @@ func (e *CohereAPIError) Error() string {
 	return fmt.Sprintf("cohere: %d: %s", e.StatusCode, e.Message)
 }
 
-// Embed returns one Dimension-length vector per text, in as few API calls as
-// the 96-text limit allows. Empty input makes no call.
+// Embed returns one vector per text in as few API calls as possible.
 func (e *CohereEmbedder) Embed(ctx context.Context, texts []string, kind Kind) ([][]float32, error) {
 	model, inputType := e.documentModel, "search_document"
 	if kind == Query {

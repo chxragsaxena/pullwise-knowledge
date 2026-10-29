@@ -1,7 +1,4 @@
-// Package store keeps chunks and their embeddings in PostgreSQL with pgvector.
-//
-// Every operation takes a tenant and only ever touches that tenant's rows;
-// tenant isolation lives here, in the WHERE clauses, so no caller can forget it.
+// Package store keeps chunks and embeddings in PostgreSQL with pgvector, scoped per tenant.
 package store
 
 import (
@@ -77,8 +74,7 @@ func (s *Store) IndexedRef(ctx context.Context, tenant, repo string) (string, bo
 	return ref, true, nil
 }
 
-// ReplaceRepo makes the stored chunks of a repo exactly the given ones, in one
-// transaction: a failure leaves the previous index untouched.
+// ReplaceRepo atomically replaces the stored chunks of a repo.
 func (s *Store) ReplaceRepo(ctx context.Context, tenant, repo, ref string, chunks []Stored) error {
 	for i, c := range chunks {
 		if len(c.Vector) != embed.Dimension {
@@ -115,8 +111,7 @@ func (s *Store) ReplaceRepo(ctx context.Context, tenant, repo, ref string, chunk
 	return tx.Commit()
 }
 
-// Search returns the topK chunks of a repo closest to the query vector,
-// skipping any in excludePaths (e.g. the files a caller already has in full).
+// Search returns the topK chunks of a repo closest to the query, skipping excludePaths.
 func (s *Store) Search(ctx context.Context, tenant, repo string, query []float32, topK int, excludePaths []string) ([]Match, error) {
 	if len(query) != embed.Dimension {
 		return nil, fmt.Errorf("query vector has %d dimensions, want %d", len(query), embed.Dimension)
@@ -156,8 +151,7 @@ func (s *Store) DeleteRepo(ctx context.Context, tenant, repo string) (bool, erro
 	return n > 0, nil
 }
 
-// vectorLiteral formats a vector in pgvector's text form, "[1,2,3]". Sending
-// text and casting in SQL avoids needing a pgvector client library.
+// vectorLiteral formats a vector in pgvector's text form, "[1,2,3]".
 func vectorLiteral(v []float32) string {
 	var b strings.Builder
 	b.WriteByte('[')

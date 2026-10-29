@@ -15,14 +15,12 @@ type Config struct {
 	DatabaseURL string
 	CohereKey   string
 
-	// JWTSecret signs and verifies the tokens other services present. Share it
-	// only with the services allowed to call this one.
+	// JWTSecret signs and verifies tokens; share it only with allowed callers.
 	JWTSecret   []byte
 	JWTIssuer   string
 	JWTAudience string
 
-	// TLSCertFile and TLSKeyFile turn on HTTPS. TLSClientCAFile additionally
-	// demands a client certificate signed by that CA (mutual TLS).
+	// TLSCertFile and TLSKeyFile enable HTTPS; TLSClientCAFile adds mutual TLS.
 	TLSCertFile     string
 	TLSKeyFile      string
 	TLSClientCAFile string

@@ -1,7 +1,4 @@
-// Package devcert creates a throwaway certificate authority and the server and
-// client certificates signed by it, for running the services with mutual TLS on a
-// development machine. In production, use certificates from your platform or a
-// real CA; these are not for that.
+// Package devcert creates throwaway development certificates for mutual TLS (not for production).
 package devcert
 
 import (
@@ -21,8 +18,7 @@ import (
 
 const validity = 365 * 24 * time.Hour
 
-// Generate writes ca.pem, server.pem/server-key.pem and client.pem/client-key.pem
-// into dir. hosts are the names and IPs the server certificate is valid for.
+// Generate writes the CA, server and client certificates and keys into dir.
 func Generate(dir string, hosts []string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err

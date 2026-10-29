@@ -1,6 +1,4 @@
-// Command knowledge runs the PullWise knowledge service: it indexes a
-// repository's code and answers "what is related to this?" searches, for other
-// services to call.
+// Command knowledge runs the PullWise knowledge service (repo indexing and search).
 package main
 
 import (

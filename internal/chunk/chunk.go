@@ -1,7 +1,4 @@
-// Package chunk splits source files into pieces small enough to embed and
-// retrieve. Go files are split at declaration boundaries (whole functions and
-// types stay together); everything else is split by lines, preferring blank
-// lines as cut points.
+// Package chunk splits source files into pieces small enough to embed.
 package chunk
 
 import (
@@ -11,14 +8,11 @@ import (
 )
 
 const (
-	// MaxChars is the target maximum size of a chunk. A single declaration
-	// larger than this is split further.
+	// MaxChars is the target maximum size of a chunk.
 	MaxChars = 1500
-	// overlapLines are repeated at the start of the next piece when a long
-	// block is cut, so context isn't lost at the boundary.
+	// overlapLines are repeated at the start of the next piece of a cut block.
 	overlapLines = 4
-	// maxLineChars bounds one line; longer lines (minified code, data blobs)
-	// are truncated for chunking.
+	// maxLineChars bounds one line; longer lines are truncated.
 	maxLineChars = 2000
 )
 
@@ -31,8 +25,7 @@ type Chunk struct {
 	Content   string
 }
 
-// Text is what gets embedded: the path first, so a query naming a file or
-// package can match, then the code.
+// Text is what gets embedded: the path, then the code.
 func (c Chunk) Text() string { return c.Path + "\n" + c.Content }
 
 // Split divides a file into chunks. An empty or whitespace-only file yields none.
@@ -58,8 +51,7 @@ func Split(path, content string) []Chunk {
 // span is a 1-based inclusive line range.
 type span struct{ start, end int }
 
-// splitGo cuts at top-level declarations. ok is false if the file doesn't parse,
-// so the caller can fall back to line-based splitting.
+// splitGo cuts at top-level declarations; ok is false if the file doesn't parse.
 func splitGo(path, content string, lines []string) ([]Chunk, bool) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, content, parser.ParseComments)
@@ -67,9 +59,7 @@ func splitGo(path, content string, lines []string) ([]Chunk, bool) {
 		return nil, false
 	}
 
-	// Units tile the file: each one runs from just after the previous
-	// declaration to the end of its own, so comments and blank lines travel
-	// with the declaration they precede. Trailing lines join the last unit.
+	// Units tile the file so comments travel with the declaration they precede.
 	var units []span
 	prevEnd := 0
 	for _, d := range f.Decls {
@@ -79,8 +69,7 @@ func splitGo(path, content string, lines []string) ([]Chunk, bool) {
 	}
 	units[len(units)-1].end = len(lines)
 
-	// Small neighbouring units (the package clause and imports, short helpers)
-	// are merged below, so boilerplate doesn't become chunks of its own.
+	// Small neighbouring units are merged below.
 	var out []Chunk
 	var cur *span
 	flush := func() {
@@ -107,8 +96,7 @@ func splitGo(path, content string, lines []string) ([]Chunk, bool) {
 	return out, true
 }
 
-// splitRange cuts lines[start..end] (1-based, inclusive) into pieces of at most
-// MaxChars, preferring to cut at a blank line and overlapping consecutive pieces.
+// splitRange cuts lines[start..end] (1-based, inclusive) into pieces of at most MaxChars.
 func splitRange(path string, lines []string, start, end int) []Chunk {
 	var out []Chunk
 	for start <= end {

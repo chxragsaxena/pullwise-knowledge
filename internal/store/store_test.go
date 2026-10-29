@@ -12,9 +12,7 @@ import (
 	"github.com/chxragsaxena/pullwise-knowledge/migrations"
 )
 
-// testStore returns a Store on a freshly migrated database. It needs a throwaway
-// PostgreSQL database with pgvector, named *_test, in TEST_DATABASE_URL, and
-// skips otherwise. The schema is wiped, so it refuses any other database.
+// testStore needs a throwaway *_test database in TEST_DATABASE_URL (its schema is wiped).
 func testStore(t *testing.T) *Store {
 	t.Helper()
 	raw := os.Getenv("TEST_DATABASE_URL")
@@ -41,7 +39,6 @@ func testStore(t *testing.T) *Store {
 }
 
 // vec returns a vector with the given components at the start, zero elsewhere.
-// Cosine similarity between two such vectors is easy to reason about.
 func vec(components ...float32) []float32 {
 	v := make([]float32, embed.Dimension)
 	copy(v, components)
@@ -111,8 +108,7 @@ func TestSearchRanksByCosineSimilarity(t *testing.T) {
 func TestTenantsCannotSeeEachOthersChunks(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	// The same repo name under two tenants, with an identical vector: a query
-	// that ignored the tenant would return both.
+	// Same repo name and vector under two tenants: ignoring the tenant would return both.
 	if err := s.ReplaceRepo(ctx, "u1", "o/secret", "a", []Stored{stored("alice.go", vec(1))}); err != nil {
 		t.Fatal(err)
 	}

@@ -1,17 +1,12 @@
-// Package embed turns text into vectors for similarity search. Providers sit
-// behind Embedder so the choice of service stays reversible.
+// Package embed turns text into vectors for similarity search.
 package embed
 
 import "context"
 
-// Dimension is the length of every vector this service stores. It must match
-// the vector(N) column in migrations/0001_init.sql. 1024 keeps vectors small
-// and within pgvector's 2,000-dimension limit for indexes (Cohere's default
-// output, 2048, is too large to index).
+// Dimension is the vector length; it must match vector(N) in migrations/0001_init.sql.
 const Dimension = 1024
 
-// Kind says what a text will be used for. Many embedding models produce
-// different vectors for documents being indexed and queries searching them.
+// Kind says whether a text is a document or a query (models embed them differently).
 type Kind int
 
 const (
@@ -21,8 +16,7 @@ const (
 	Query
 )
 
-// Embedder converts texts to Dimension-length vectors, one per input and in
-// the same order.
+// Embedder converts texts to Dimension-length vectors, one per input, in order.
 type Embedder interface {
 	Embed(ctx context.Context, texts []string, kind Kind) ([][]float32, error)
 }

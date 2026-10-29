@@ -1,5 +1,4 @@
-// Command devcerts writes development certificates for mutual TLS between the
-// services. Usage:  go run ./cmd/devcerts -out certs -hosts localhost,127.0.0.1,knowledge
+// Command devcerts writes development certificates for mutual TLS.
 package main
 
 import (

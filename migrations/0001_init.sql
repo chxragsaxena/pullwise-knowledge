@@ -1,8 +1,7 @@
 -- Vector search needs the pgvector extension (the pgvector/pgvector image ships it).
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- One row per (tenant, repo): which commit is currently indexed. Every chunk
--- below belongs to exactly one of these, so deleting a repo deletes its chunks.
+-- One row per (tenant, repo): the commit currently indexed.
 CREATE TABLE indexed_repos (
     tenant     TEXT NOT NULL,
     repo       TEXT NOT NULL,
@@ -11,14 +10,7 @@ CREATE TABLE indexed_repos (
     PRIMARY KEY (tenant, repo)
 );
 
--- The vector size must match embed.Dimension (1024).
---
--- There is deliberately no approximate (HNSW/IVFFlat) index here. Those indexes
--- are global: a query is answered from the nearest neighbours across ALL tenants
--- and only then filtered by tenant and repo, so with many tenants it can return
--- fewer results than exist for this one. Searches are always scoped to one
--- tenant+repo (a few thousand chunks at most), so scanning exactly that slice
--- via the btree index below is fast, complete and cannot leak across tenants.
+-- Vector size must match embed.Dimension; no HNSW/IVFFlat index, as those are global across tenants.
 CREATE TABLE chunks (
     id         BIGSERIAL PRIMARY KEY,
     tenant     TEXT NOT NULL,

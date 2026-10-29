@@ -1,7 +1,4 @@
-// Package auth authenticates calls from other services with short-lived signed
-// tokens (JWT, HS256). A token names the tenant whose data the call may touch
-// and the operations it may perform; the service trusts those claims and never
-// anything about tenants in a request body.
+// Package auth authenticates service calls with short-lived signed tokens (JWT, HS256).
 package auth
 
 import (
@@ -24,8 +21,7 @@ const (
 )
 
 const (
-	// MaxLifetime is the longest a token may be valid for. Issuers use far
-	// less; this stops a leaked or mis-issued token being useful for long.
+	// MaxLifetime is the longest a token may be valid for.
 	MaxLifetime = 5 * time.Minute
 	// leeway tolerates small clock differences between services.
 	leeway = 5 * time.Second
@@ -53,8 +49,7 @@ type Verifier struct {
 	audience string
 }
 
-// NewVerifier returns a Verifier for tokens signed with secret by issuer and
-// addressed to audience.
+// NewVerifier returns a Verifier for tokens from issuer addressed to audience.
 func NewVerifier(secret []byte, issuer, audience string) (*Verifier, error) {
 	if len(secret) < MinSecretBytes {
 		return nil, fmt.Errorf("jwt secret must be at least %d bytes", MinSecretBytes)
@@ -65,13 +60,11 @@ func NewVerifier(secret []byte, issuer, audience string) (*Verifier, error) {
 	return &Verifier{secret: secret, issuer: issuer, audience: audience}, nil
 }
 
-// Verify validates a token's signature, algorithm, issuer, audience and expiry,
-// and its claims' shape.
+// Verify validates a token's signature, issuer, audience, expiry and claims.
 func (v *Verifier) Verify(raw string) (Claims, error) {
 	var claims Claims
 	_, err := jwt.ParseWithClaims(raw, &claims, func(*jwt.Token) (any, error) { return v.secret, nil },
-		// Only HS256: never trust the token's own algorithm header (this also
-		// rejects "none" and any asymmetric algorithm tricks).
+		// Only HS256: never trust the token's own algorithm header.
 		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
 		jwt.WithIssuer(v.issuer),
 		jwt.WithAudience(v.audience),
@@ -104,7 +97,6 @@ func FromContext(ctx context.Context) (Claims, bool) {
 }
 
 // Require returns middleware that demands a valid bearer token carrying scope.
-// Missing or bad credentials are 401; a valid token without the scope is 403.
 func (v *Verifier) Require(scope string, deny func(w http.ResponseWriter, status int, code, message string)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -130,8 +122,7 @@ func (v *Verifier) Require(scope string, deny func(w http.ResponseWriter, status
 	}
 }
 
-// Issue creates a signed token. The calling service uses it to authenticate
-// to this one; tests use it too.
+// Issue creates a signed token.
 func Issue(secret []byte, issuer, audience, tenant string, scopes []string, ttl time.Duration, now time.Time) (string, error) {
 	if len(secret) < MinSecretBytes {
 		return "", fmt.Errorf("jwt secret must be at least %d bytes", MinSecretBytes)

@@ -63,7 +63,7 @@ func TestAClientWithTheRightCertificateGetsThrough(t *testing.T) {
 func TestAClientWithoutACertificateIsRefused(t *testing.T) {
 	dir := certs(t)
 	srv := mtlsServer(t, dir)
-	cfg, err := ClientConfig("", "", filepath.Join(dir, "ca.pem")) // trusts the server, offers no certificate
+	cfg, err := ClientConfig("", "", filepath.Join(dir, "ca.pem")) // no client certificate
 	if err != nil {
 		t.Fatal(err)
 	}

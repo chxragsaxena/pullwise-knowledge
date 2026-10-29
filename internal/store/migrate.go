@@ -10,13 +10,10 @@ import (
 	"strings"
 )
 
-// migrationLockID is an arbitrary constant identifying our advisory lock, so
-// two instances starting at once do not apply migrations concurrently.
+// migrationLockID is the advisory lock id that serializes concurrent migrations.
 const migrationLockID = 727_002
 
-// Migrate applies every *.sql file in fsys that has not been applied yet, in
-// name order. Each file runs in its own transaction with its bookkeeping row,
-// so a failed migration leaves nothing half-applied.
+// Migrate applies every unapplied *.sql file in fsys, in name order, one transaction each.
 func Migrate(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	names, err := fs.Glob(fsys, "*.sql")
 	if err != nil {

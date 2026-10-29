@@ -1,6 +1,4 @@
-// Package api exposes the knowledge service over HTTP. Every /v1 route needs a
-// signed token (see package auth); the tenant a call may touch comes from the
-// token, never from the request body.
+// Package api exposes the knowledge service over HTTP; the tenant comes from the token.
 package api
 
 import (
@@ -245,8 +243,7 @@ func (a *API) searchRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
-// repoStatus tells a caller which commit of a repo is indexed for its tenant, so
-// it can skip downloading and re-sending a repository that is already up to date.
+// repoStatus reports which commit of a repo is indexed for the tenant.
 func (a *API) repoStatus(w http.ResponseWriter, r *http.Request) {
 	claims, _ := auth.FromContext(r.Context())
 	repo := r.PathValue("owner") + "/" + r.PathValue("name")
@@ -285,9 +282,7 @@ func (a *API) deleteRepo(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// decode reads a size-limited JSON body, rejecting unknown fields. Rejecting
-// unknown fields matters here: a caller that sends a "tenant" in the body gets
-// an error instead of having it silently ignored.
+// decode reads a size-limited JSON body and rejects unknown fields (e.g. a "tenant").
 func decode(w http.ResponseWriter, r *http.Request, limit int64, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
@@ -346,9 +341,7 @@ func requestID(r *http.Request) string {
 	return id
 }
 
-// withRequestID keeps the caller's X-Request-ID (if it's well-formed) or makes
-// one, returns it in the response and puts it in the context, so one request
-// can be followed across services in the logs.
+// withRequestID keeps a well-formed X-Request-ID or makes one, for log tracing.
 func (a *API) withRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
