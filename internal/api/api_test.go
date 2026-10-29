@@ -380,6 +380,27 @@ func TestProviderAndStoreFailuresAreReportedWithoutLeakingDetails(t *testing.T) 
 	}
 }
 
+func TestRepoStatusReportsTheIndexedRefPerTenant(t *testing.T) {
+	h := newHarness(t)
+	h.do("POST", "/v1/index", indexBody, token(t, "u1", auth.ScopeIndex))
+
+	rec := h.do("GET", "/v1/repos/o/r", "", token(t, "u1", auth.ScopeSearch))
+	var got map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&got)
+	if rec.Code != 200 || got["ref"] != "abc123" {
+		t.Fatalf("owner's status = %d %v", rec.Code, got)
+	}
+	if rec := h.do("GET", "/v1/repos/o/r", "", token(t, "u2", auth.ScopeSearch)); rec.Code != 404 {
+		t.Fatalf("another tenant's status = %d, want 404", rec.Code)
+	}
+	if rec := h.do("GET", "/v1/repos/o/r", "", ""); rec.Code != 401 {
+		t.Fatalf("no token = %d, want 401", rec.Code)
+	}
+	if rec := h.do("GET", "/v1/repos/o/r", "", token(t, "u1", auth.ScopeIndex)); rec.Code != 403 {
+		t.Fatalf("index-only token = %d, want 403 (status needs the search scope)", rec.Code)
+	}
+}
+
 func TestDeleteRepo(t *testing.T) {
 	h := newHarness(t)
 	idx, del := token(t, "u1", auth.ScopeIndex), token(t, "u2", auth.ScopeIndex)

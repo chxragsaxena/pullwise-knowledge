@@ -58,6 +58,12 @@ The replacement is atomic: a failure leaves the previous index untouched.
 best first. `score` is cosine similarity (1 identical, 0 unrelated). A repo that is
 not indexed gives an empty list.
 
+## `GET /v1/repos/{owner}/{name}`  (scope `search`)
+
+`200`: `{ "repo", "ref" }`, the commit currently indexed for the token's tenant, or
+`404` if none. Lets a caller skip downloading and re-sending a repository that is
+already up to date.
+
 ## `DELETE /v1/repos/{owner}/{name}`  (scope `index`)
 
 `204` if the tenant's index was deleted, `404` if there was none.

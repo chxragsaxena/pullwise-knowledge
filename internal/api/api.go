@@ -76,6 +76,7 @@ func (a *API) Handler() http.Handler {
 	search := a.verifier.Require(auth.ScopeSearch, writeError)
 	mux.Handle("POST /v1/index", index(http.HandlerFunc(a.indexRepo)))
 	mux.Handle("DELETE /v1/repos/{owner}/{name}", index(http.HandlerFunc(a.deleteRepo)))
+	mux.Handle("GET /v1/repos/{owner}/{name}", search(http.HandlerFunc(a.repoStatus)))
 	mux.Handle("POST /v1/search", search(http.HandlerFunc(a.searchRepo)))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
@@ -242,6 +243,27 @@ func (a *API) searchRepo(w http.ResponseWriter, r *http.Request) {
 		results = append(results, searchResult{Path: m.Path, StartLine: m.StartLine, EndLine: m.EndLine, Content: m.Content, Score: m.Score})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+// repoStatus tells a caller which commit of a repo is indexed for its tenant, so
+// it can skip downloading and re-sending a repository that is already up to date.
+func (a *API) repoStatus(w http.ResponseWriter, r *http.Request) {
+	claims, _ := auth.FromContext(r.Context())
+	repo := r.PathValue("owner") + "/" + r.PathValue("name")
+	if !repoPattern.MatchString(repo) {
+		writeError(w, http.StatusBadRequest, "invalid_request", "The repo must look like owner/name.")
+		return
+	}
+	ref, ok, err := a.store.IndexedRef(r.Context(), claims.Tenant, repo)
+	if err != nil {
+		a.internalError(w, r, "read indexed ref", err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "That repository is not indexed.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"repo": repo, "ref": ref})
 }
 
 func (a *API) deleteRepo(w http.ResponseWriter, r *http.Request) {
