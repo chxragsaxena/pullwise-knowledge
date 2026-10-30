@@ -82,7 +82,26 @@ func Open(ctx context.Context, databaseURL, schema string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("connect to database: %w", err)
 	}
+	if schema != "" {
+		if err := checkSchema(pingCtx, db, schema); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	return db, nil
+}
+
+// checkSchema fails if the connection ignored the requested schema, as a pooled connection does.
+// Carrying on would put this service's tables in the public schema, among another application's.
+func checkSchema(ctx context.Context, db *sql.DB, want string) error {
+	var got string
+	if err := db.QueryRowContext(ctx, "SELECT current_schema()").Scan(&got); err != nil {
+		return fmt.Errorf("check the database schema: %w", err)
+	}
+	if got != want {
+		return fmt.Errorf("the database connection uses schema %q, not %q: DATABASE_URL is probably a pooled connection (host contains \"-pooler\"); use the direct connection string", got, want)
+	}
+	return nil
 }
 
 // Ping reports whether the database is reachable.

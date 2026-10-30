@@ -99,6 +99,11 @@ func TestASchemaKeepsTheServicesTablesAwayFromTheOthers(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := s.db.ExecContext(ctx, "DROP SCHEMA IF EXISTS kb CASCADE"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = s.db.Exec("DROP SCHEMA IF EXISTS kb CASCADE") })
+
 	db, err := Open(ctx, os.Getenv("TEST_DATABASE_URL"), "kb")
 	if err != nil {
 		t.Fatalf("Open with a schema: %v", err)
@@ -121,6 +126,18 @@ func TestASchemaKeepsTheServicesTablesAwayFromTheOthers(t *testing.T) {
 	}
 	if got, err := ks.Search(ctx, "u1", "o/r", vec(1), "", 3, nil); err != nil || len(got) != 1 {
 		t.Fatalf("search inside the schema = %v, %v", got, err)
+	}
+}
+
+func TestCheckSchemaRefusesAConnectionThatIgnoredTheSchema(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	if err := checkSchema(ctx, s.db, "public"); err != nil {
+		t.Fatalf("matching schema rejected: %v", err)
+	}
+	err := checkSchema(ctx, s.db, "knowledge")
+	if err == nil || !strings.Contains(err.Error(), "pooled") {
+		t.Fatalf("error = %v, want it to say the connection is probably pooled", err)
 	}
 }
 
