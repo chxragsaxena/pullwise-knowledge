@@ -23,12 +23,13 @@ var secret = []byte("0123456789abcdef0123456789abcdef")
 
 // fakeStore keeps chunks in memory, keyed by tenant and repo.
 type fakeStore struct {
-	mu      sync.Mutex
-	repos   map[string]map[string][]store.Stored // tenant -> repo -> chunks
-	refs    map[string]string                    // tenant|repo -> ref
-	pingErr error
-	failOn  string
-	calls   []string // tenant seen by each store call
+	mu       sync.Mutex
+	repos    map[string]map[string][]store.Stored // tenant -> repo -> chunks
+	refs     map[string]string                    // tenant|repo -> ref
+	pingErr  error
+	failOn   string
+	calls    []string // tenant seen by each store call
+	keywords []string // keywords given to each search
 }
 
 func newFakeStore() *fakeStore {
@@ -60,8 +61,11 @@ func (f *fakeStore) ReplaceRepo(_ context.Context, tenant, repo, ref string, chu
 	return nil
 }
 
-func (f *fakeStore) Search(_ context.Context, tenant, repo string, _ []float32, topK int, exclude []string) ([]store.Match, error) {
+func (f *fakeStore) Search(_ context.Context, tenant, repo string, _ []float32, keywords string, topK int, exclude []string) ([]store.Match, error) {
 	f.note(tenant)
+	f.mu.Lock()
+	f.keywords = append(f.keywords, keywords)
+	f.mu.Unlock()
 	var out []store.Match
 	for _, c := range f.repos[tenant][repo] {
 		skip := false
@@ -327,6 +331,7 @@ func TestSearchValidation(t *testing.T) {
 		{"query too long", `{"repo":"o/r","query":"` + strings.Repeat("q", maxQueryChars+1) + `"}`},
 		{"topK too big", `{"repo":"o/r","query":"q","topK":500}`},
 		{"negative topK", `{"repo":"o/r","query":"q","topK":-1}`},
+		{"keywords too long", `{"repo":"o/r","query":"q","keywords":"` + strings.Repeat("k", maxQueryChars+1) + `"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -339,6 +344,18 @@ func TestSearchValidation(t *testing.T) {
 				t.Fatal("an invalid search spent an embedding call")
 			}
 		})
+	}
+}
+
+func TestKeywordsDefaultToTheQueryUnlessGivenOrExplicitlyEmpty(t *testing.T) {
+	tok := token(t, "u1", auth.ScopeSearch)
+	h := newHarness(t)
+	h.do("POST", "/v1/search", `{"repo":"o/r","query":"which model"}`, tok)
+	h.do("POST", "/v1/search", `{"repo":"o/r","query":"which model","keywords":"cohere embed"}`, tok)
+	h.do("POST", "/v1/search", `{"repo":"o/r","query":"which model","keywords":""}`, tok)
+
+	if got := h.st.keywords; len(got) != 3 || got[0] != "which model" || got[1] != "cohere embed" || got[2] != "" {
+		t.Fatalf("keywords seen by the store = %q", got)
 	}
 }
 

@@ -97,34 +97,76 @@ func (s *Store) ReplaceRepo(ctx context.Context, tenant, repo, ref string, chunk
 		return fmt.Errorf("record index: %w", err)
 	}
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO chunks (tenant, repo, path, start_line, end_line, content, embedding)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::vector)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO chunks (tenant, repo, path, start_line, end_line, content, embedding, path_words, content_words)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9)`)
 	if err != nil {
 		return fmt.Errorf("prepare insert: %w", err)
 	}
 	defer stmt.Close()
 	for _, c := range chunks {
-		if _, err := stmt.ExecContext(ctx, tenant, repo, c.Path, c.StartLine, c.EndLine, c.Content, vectorLiteral(c.Vector)); err != nil {
+		if _, err := stmt.ExecContext(ctx, tenant, repo, c.Path, c.StartLine, c.EndLine, c.Content, vectorLiteral(c.Vector),
+			chunk.SearchText(c.Path), chunk.SearchText(c.Content)); err != nil {
 			return fmt.Errorf("insert chunk %s:%d: %w", c.Path, c.StartLine, err)
 		}
 	}
 	return tx.Commit()
 }
 
-// Search returns the topK chunks of a repo closest to the query, skipping excludePaths.
-func (s *Store) Search(ctx context.Context, tenant, repo string, query []float32, topK int, excludePaths []string) ([]Match, error) {
+// minCandidates is the least results taken from each of the two searches before they are fused.
+const minCandidates = 30
+
+// vectorOnlySQL ranks by cosine distance alone.
+const vectorOnlySQL = `
+	SELECT path, start_line, end_line, content, 1 - (embedding <=> $3::vector) AS score
+	FROM chunks
+	WHERE tenant = $1 AND repo = $2 AND NOT (path = ANY($5::text[]))
+	ORDER BY embedding <=> $3::vector
+	LIMIT $4`
+
+// hybridSQL fuses the vector ranking and the keyword ranking with reciprocal rank fusion.
+// Both lists are filtered to the tenant and repo before ranking; score stays the cosine similarity.
+// The 60 in the fusion is the usual reciprocal-rank constant.
+const hybridSQL = `
+	WITH vec AS (
+		SELECT id, row_number() OVER (ORDER BY embedding <=> $3::vector) AS r
+		FROM chunks
+		WHERE tenant = $1 AND repo = $2 AND NOT (path = ANY($5::text[]))
+		ORDER BY embedding <=> $3::vector
+		LIMIT $6),
+	txt AS (
+		SELECT id, row_number() OVER (ORDER BY ts_rank_cd(search, q) DESC, id) AS r
+		FROM chunks, to_tsquery('simple', $7) q
+		WHERE tenant = $1 AND repo = $2 AND NOT (path = ANY($5::text[])) AND search @@ q
+		ORDER BY ts_rank_cd(search, q) DESC, id
+		LIMIT $6),
+	fused AS (
+		SELECT id, sum(1.0 / (60 + r)) AS rrf
+		FROM (SELECT id, r FROM vec UNION ALL SELECT id, r FROM txt) u
+		GROUP BY id)
+	SELECT c.path, c.start_line, c.end_line, c.content, 1 - (c.embedding <=> $3::vector) AS score
+	FROM fused f JOIN chunks c ON c.id = f.id
+	ORDER BY f.rrf DESC, c.id
+	LIMIT $4`
+
+// Search returns the topK chunks of a repo that best match the query vector and the keywords,
+// skipping excludePaths. Without usable keywords it ranks by vector similarity alone.
+func (s *Store) Search(ctx context.Context, tenant, repo string, query []float32, keywords string, topK int, excludePaths []string) ([]Match, error) {
 	if len(query) != embed.Dimension {
 		return nil, fmt.Errorf("query vector has %d dimensions, want %d", len(query), embed.Dimension)
 	}
 	if excludePaths == nil {
 		excludePaths = []string{}
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT path, start_line, end_line, content, 1 - (embedding <=> $3::vector) AS score
-		FROM chunks
-		WHERE tenant = $1 AND repo = $2 AND NOT (path = ANY($5::text[]))
-		ORDER BY embedding <=> $3::vector
-		LIMIT $4`, tenant, repo, vectorLiteral(query), topK, excludePaths)
+
+	var rows *sql.Rows
+	var err error
+	if terms := chunk.QueryTerms(keywords); len(terms) > 0 {
+		candidates := max(minCandidates, topK*5)
+		rows, err = s.db.QueryContext(ctx, hybridSQL, tenant, repo, vectorLiteral(query), topK, excludePaths,
+			candidates, strings.Join(terms, " | "))
+	} else {
+		rows, err = s.db.QueryContext(ctx, vectorOnlySQL, tenant, repo, vectorLiteral(query), topK, excludePaths)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}

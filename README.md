@@ -27,7 +27,10 @@ PullWise worker ── signed token (+ optional mutual TLS) ──►  knowledge
 4. **Store.** Chunks and vectors go into PostgreSQL with pgvector, in one
    transaction that replaces the repo's previous index.
 5. **Search.** A query is embedded and matched by cosine similarity against that
-   tenant's chunks of that repo.
+   tenant's chunks of that repo. Alongside, a keyword search runs over the chunks' words
+   (identifiers are split, so `CohereEmbedder` also matches "cohere" and "embedder", and file
+   names count most). The two rankings are merged with reciprocal rank fusion. Both are
+   filtered to the tenant and repo before ranking.
 
 See [docs/api.md](docs/api.md) for the contract.
 

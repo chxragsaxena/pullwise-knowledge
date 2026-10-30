@@ -44,7 +44,7 @@ var (
 type Store interface {
 	IndexedRef(ctx context.Context, tenant, repo string) (string, bool, error)
 	ReplaceRepo(ctx context.Context, tenant, repo, ref string, chunks []store.Stored) error
-	Search(ctx context.Context, tenant, repo string, query []float32, topK int, excludePaths []string) ([]store.Match, error)
+	Search(ctx context.Context, tenant, repo string, query []float32, keywords string, topK int, excludePaths []string) ([]store.Match, error)
 	DeleteRepo(ctx context.Context, tenant, repo string) (bool, error)
 	Ping(ctx context.Context) error
 }
@@ -186,6 +186,7 @@ func (a *API) indexRepo(w http.ResponseWriter, r *http.Request) {
 type searchRequest struct {
 	Repo         string   `json:"repo"`
 	Query        string   `json:"query"`
+	Keywords     *string  `json:"keywords"` // words for keyword search; absent means the query's words, "" means none
 	TopK         int      `json:"topK"`
 	ExcludePaths []string `json:"excludePaths"`
 }
@@ -212,6 +213,14 @@ func (a *API) searchRepo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf(`"query" must be 1 to %d characters.`, maxQueryChars))
 		return
 	}
+	keywords := req.Query
+	if req.Keywords != nil {
+		keywords = *req.Keywords
+	}
+	if len(keywords) > maxQueryChars {
+		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf(`"keywords" must be at most %d characters.`, maxQueryChars))
+		return
+	}
 	if req.TopK == 0 {
 		req.TopK = defaultTopK
 	}
@@ -230,7 +239,7 @@ func (a *API) searchRepo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "embedding_unavailable", "The embedding provider could not be reached.")
 		return
 	}
-	matches, err := a.store.Search(r.Context(), claims.Tenant, req.Repo, vectors[0], req.TopK, req.ExcludePaths)
+	matches, err := a.store.Search(r.Context(), claims.Tenant, req.Repo, vectors[0], keywords, req.TopK, req.ExcludePaths)
 	if err != nil {
 		a.internalError(w, r, "search", err)
 		return

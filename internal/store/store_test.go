@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -88,7 +89,7 @@ func TestSearchRanksByCosineSimilarity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := s.Search(ctx, "u1", "o/r", vec(1, 0), 3, nil)
+	got, err := s.Search(ctx, "u1", "o/r", vec(1, 0), "", 3, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestSearchRanksByCosineSimilarity(t *testing.T) {
 		t.Fatalf("scores = %v .. %v, want ~1 for identical and ~0 for orthogonal", got[0].Score, got[2].Score)
 	}
 
-	top1, _ := s.Search(ctx, "u1", "o/r", vec(1, 0), 1, nil)
+	top1, _ := s.Search(ctx, "u1", "o/r", vec(1, 0), "", 1, nil)
 	if len(top1) != 1 || top1[0].Path != "same.go" {
 		t.Fatalf("topK=1 returned %v", paths(top1))
 	}
@@ -117,7 +118,7 @@ func TestTenantsCannotSeeEachOthersChunks(t *testing.T) {
 	}
 
 	for tenant, want := range map[string]string{"u1": "alice.go", "u2": "bob.go"} {
-		got, err := s.Search(ctx, tenant, "o/secret", vec(1), 10, nil)
+		got, err := s.Search(ctx, tenant, "o/secret", vec(1), "", 10, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +127,7 @@ func TestTenantsCannotSeeEachOthersChunks(t *testing.T) {
 		}
 	}
 
-	if got, _ := s.Search(ctx, "u3", "o/secret", vec(1), 10, nil); len(got) != 0 {
+	if got, _ := s.Search(ctx, "u3", "o/secret", vec(1), "", 10, nil); len(got) != 0 {
 		t.Errorf("a tenant with no index saw %v", paths(got))
 	}
 	if ref, ok, _ := s.IndexedRef(ctx, "u3", "o/secret"); ok {
@@ -137,7 +138,7 @@ func TestTenantsCannotSeeEachOthersChunks(t *testing.T) {
 	if deleted, err := s.DeleteRepo(ctx, "u1", "o/secret"); err != nil || !deleted {
 		t.Fatalf("DeleteRepo = %v, %v", deleted, err)
 	}
-	if got, _ := s.Search(ctx, "u2", "o/secret", vec(1), 10, nil); len(got) != 1 {
+	if got, _ := s.Search(ctx, "u2", "o/secret", vec(1), "", 10, nil); len(got) != 1 {
 		t.Error("deleting tenant u1's index removed tenant u2's chunks")
 	}
 }
@@ -150,7 +151,7 @@ func TestReplaceRepoReplacesEverythingAndRecordsTheRef(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, _ := s.Search(ctx, "u1", "o/r", vec(1), 10, nil)
+	got, _ := s.Search(ctx, "u1", "o/r", vec(1), "", 10, nil)
 	if !equal(paths(got), []string{"new.go"}) {
 		t.Fatalf("after replace saw %v, want only new.go", paths(got))
 	}
@@ -172,7 +173,7 @@ func TestAFailedReplaceLeavesThePreviousIndexIntact(t *testing.T) {
 		t.Fatal("a wrong-size vector must be rejected")
 	}
 
-	got, _ := s.Search(ctx, "u1", "o/r", vec(1), 10, nil)
+	got, _ := s.Search(ctx, "u1", "o/r", vec(1), "", 10, nil)
 	if !equal(paths(got), []string{"keep.go"}) {
 		t.Fatalf("after a failed replace saw %v, want the old index", paths(got))
 	}
@@ -186,12 +187,79 @@ func TestSearchCanExcludePathsAndRejectsABadQuery(t *testing.T) {
 	ctx := context.Background()
 	_ = s.ReplaceRepo(ctx, "u1", "o/r", "x", []Stored{stored("a.go", vec(1)), stored("b.go", vec(1, 0.5)), stored("c.go", vec(1, 1))})
 
-	got, err := s.Search(ctx, "u1", "o/r", vec(1), 10, []string{"a.go", "c.go"})
+	got, err := s.Search(ctx, "u1", "o/r", vec(1), "", 10, []string{"a.go", "c.go"})
 	if err != nil || !equal(paths(got), []string{"b.go"}) {
 		t.Fatalf("got %v, %v; want only b.go", paths(got), err)
 	}
-	if _, err := s.Search(ctx, "u1", "o/r", []float32{1, 2}, 5, nil); err == nil {
+	if _, err := s.Search(ctx, "u1", "o/r", []float32{1, 2}, "", 5, nil); err == nil {
 		t.Fatal("a query vector of the wrong size must be rejected")
+	}
+}
+
+func codeChunk(path, content string, v []float32) Stored {
+	return Stored{Chunk: chunk.Chunk{Path: path, StartLine: 1, EndLine: 5, Content: content}, Vector: v}
+}
+
+func TestKeywordsRescueAChunkTheVectorsMiss(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	// The query vector points at five decoys; only the keywords lead to cohere.go.
+	chunks := []Stored{codeChunk("internal/embed/cohere.go", "type CohereEmbedder struct{}", vec(0, 1))}
+	for i := 0; i < 5; i++ {
+		chunks = append(chunks, codeChunk(fmt.Sprintf("decoy%d.go", i), "package decoy", vec(1, float32(i)*0.01)))
+	}
+	if err := s.ReplaceRepo(ctx, "u1", "o/r", "x", chunks); err != nil {
+		t.Fatal(err)
+	}
+
+	without, _ := s.Search(ctx, "u1", "o/r", vec(1), "", 3, nil)
+	for _, p := range paths(without) {
+		if p == "internal/embed/cohere.go" {
+			t.Fatalf("setup is wrong: vector search alone already found it: %v", paths(without))
+		}
+	}
+
+	with, err := s.Search(ctx, "u1", "o/r", vec(1), "which model does the embedder use", 3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range paths(with) {
+		found = found || p == "internal/embed/cohere.go"
+	}
+	if !found {
+		t.Fatalf("keywords did not bring cohere.go into the top 3: %v", paths(with))
+	}
+}
+
+func TestKeywordSearchStaysInsideTheTenantAndHonoursExclusions(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_ = s.ReplaceRepo(ctx, "u1", "o/r", "x", []Stored{codeChunk("secret_token.go", "func SecretToken() {}", vec(0, 1))})
+	_ = s.ReplaceRepo(ctx, "u2", "o/r", "x", []Stored{codeChunk("other.go", "package other", vec(1))})
+
+	got, err := s.Search(ctx, "u2", "o/r", vec(1), "secret token", 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equal(paths(got), []string{"other.go"}) {
+		t.Fatalf("tenant u2 saw %v through a keyword search, want only its own chunk", paths(got))
+	}
+
+	got, _ = s.Search(ctx, "u1", "o/r", vec(1), "secret token", 10, []string{"secret_token.go"})
+	if len(got) != 0 {
+		t.Fatalf("an excluded path came back through keywords: %v", paths(got))
+	}
+}
+
+func TestKeywordsThatReduceToNothingFallBackToVectorSearch(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_ = s.ReplaceRepo(ctx, "u1", "o/r", "x", []Stored{stored("a.go", vec(1))})
+
+	got, err := s.Search(ctx, "u1", "o/r", vec(1), "how does it?? the", 3, nil)
+	if err != nil || !equal(paths(got), []string{"a.go"}) {
+		t.Fatalf("got %v, %v", paths(got), err)
 	}
 }
 

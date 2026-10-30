@@ -53,10 +53,13 @@ The replacement is atomic: a failure leaves the previous index untouched.
 
 - `query`: 1 to 4,000 characters. `topK`: 1 to 20 (default 5). `excludePaths`: up to
   100 paths to leave out, e.g. files the caller already has in full.
+- `keywords` (optional, up to 4,000 characters): the words for the keyword half of the search.
+  Left out, the query's own words are used; `""` turns keyword search off (vectors only).
 
 `200`: `{ "results": [ { "path", "startLine", "endLine", "content", "score" } ] }`,
-best first. `score` is cosine similarity (1 identical, 0 unrelated). A repo that is
-not indexed gives an empty list.
+best first after merging the vector and keyword rankings. `score` is the cosine similarity
+of that chunk (1 identical, 0 unrelated), so it need not decrease down the list. A repo
+that is not indexed gives an empty list.
 
 ## `GET /v1/repos/{owner}/{name}`  (scope `search`)
 
