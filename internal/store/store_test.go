@@ -25,7 +25,7 @@ func testStore(t *testing.T) *Store {
 		t.Fatalf("TEST_DATABASE_URL must point at a database whose name ends in _test (it is wiped)")
 	}
 	ctx := context.Background()
-	db, err := Open(ctx, raw)
+	db, err := Open(ctx, raw, "")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -68,6 +68,60 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestWithSearchPath(t *testing.T) {
+	got, err := withSearchPath("postgres://u:p%40ss@h:5432/db?sslmode=disable", "knowledge")
+	if err != nil || got != "postgres://u:p%40ss@h:5432/db?search_path=knowledge%2Cpublic&sslmode=disable" {
+		t.Fatalf("withSearchPath = %q, %v", got, err)
+	}
+	if _, err := withSearchPath("host=h dbname=db", "knowledge"); err == nil {
+		t.Fatal("a non-URL connection string must be rejected")
+	}
+}
+
+func TestOpenRejectsAnUnsafeSchemaName(t *testing.T) {
+	for _, bad := range []string{"Knowledge", "a-b", `x"; DROP SCHEMA public; --`, "1abc", strings.Repeat("a", 64)} {
+		if _, err := Open(context.Background(), "postgres://u:p@localhost/db", bad); err == nil || !strings.Contains(err.Error(), "DATABASE_SCHEMA") {
+			t.Errorf("schema %q: error = %v, want it rejected before connecting", bad, err)
+		}
+	}
+}
+
+func TestASchemaKeepsTheServicesTablesAwayFromTheOthers(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	// Another application's table of the same name as ours, in public.
+	if _, err := s.db.ExecContext(ctx, "DROP TABLE schema_migrations CASCADE; DROP TABLE chunks CASCADE; DROP TABLE indexed_repos CASCADE"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, other TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(ctx, os.Getenv("TEST_DATABASE_URL"), "kb")
+	if err != nil {
+		t.Fatalf("Open with a schema: %v", err)
+	}
+	defer db.Close()
+	if err := Migrate(ctx, db, migrations.Files); err != nil {
+		t.Fatalf("Migrate inside the schema: %v", err)
+	}
+
+	var inKB, inPublic int
+	_ = db.QueryRowContext(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'kb' AND table_name IN ('chunks','indexed_repos','schema_migrations')").Scan(&inKB)
+	_ = db.QueryRowContext(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('chunks','indexed_repos')").Scan(&inPublic)
+	if inKB != 3 || inPublic != 0 {
+		t.Fatalf("tables in kb = %d (want 3), chunk tables left in public = %d (want 0)", inKB, inPublic)
+	}
+
+	ks := New(db)
+	if err := ks.ReplaceRepo(ctx, "u1", "o/r", "x", []Stored{stored("a.go", vec(1))}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ks.Search(ctx, "u1", "o/r", vec(1), "", 3, nil); err != nil || len(got) != 1 {
+		t.Fatalf("search inside the schema = %v, %v", got, err)
+	}
 }
 
 func TestMigrateIsIdempotent(t *testing.T) {

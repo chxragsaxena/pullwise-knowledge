@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -22,8 +24,50 @@ type Store struct{ db *sql.DB }
 // New wraps an open database handle.
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
-// Open connects to PostgreSQL and verifies the connection.
-func Open(ctx context.Context, databaseURL string) (*sql.DB, error) {
+var schemaPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
+
+// withSearchPath returns the URL with the connection's default schema set to schema. public stays on the
+// path so the pgvector type is found even if the extension was installed there.
+func withSearchPath(databaseURL, schema string) (string, error) {
+	u, err := url.Parse(databaseURL)
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+		return "", errors.New("DATABASE_SCHEMA needs DATABASE_URL in the postgres:// form")
+	}
+	q := u.Query()
+	q.Set("search_path", schema+",public")
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// createSchema makes sure schema exists, using its own short connection.
+func createSchema(ctx context.Context, databaseURL, schema string) error {
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS "`+schema+`"`); err != nil {
+		return fmt.Errorf("create schema %s: %w", schema, err)
+	}
+	return nil
+}
+
+// Open connects to PostgreSQL and verifies the connection. A non-empty schema keeps all tables in
+// that schema (created if missing), so the service can share a database with another application.
+func Open(ctx context.Context, databaseURL, schema string) (*sql.DB, error) {
+	if schema != "" {
+		if !schemaPattern.MatchString(schema) {
+			return nil, fmt.Errorf("DATABASE_SCHEMA %q must be lowercase letters, digits and underscores", schema)
+		}
+		scoped, err := withSearchPath(databaseURL, schema)
+		if err != nil {
+			return nil, err
+		}
+		if err := createSchema(ctx, databaseURL, schema); err != nil {
+			return nil, err
+		}
+		databaseURL = scoped
+	}
 	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

@@ -13,7 +13,9 @@ import (
 type Config struct {
 	Addr        string
 	DatabaseURL string
-	CohereKey   string
+	// DatabaseSchema keeps this service's tables in their own schema, to share a database.
+	DatabaseSchema string
+	CohereKey      string
 
 	// JWTSecret signs and verifies tokens; share it only with allowed callers.
 	JWTSecret   []byte
@@ -32,6 +34,7 @@ func Load() (Config, error) {
 	c := Config{
 		Addr:            getenv("ADDR", ":8081"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
+		DatabaseSchema:  os.Getenv("DATABASE_SCHEMA"),
 		CohereKey:       os.Getenv("COHERE_API_KEY"),
 		JWTSecret:       []byte(os.Getenv("JWT_SECRET")),
 		JWTIssuer:       getenv("JWT_ISSUER", "pullwise"),
