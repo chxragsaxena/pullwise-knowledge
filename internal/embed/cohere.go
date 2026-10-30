@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -28,6 +30,7 @@ type CohereEmbedder struct {
 	queryModel    string
 	baseURL       string
 	http          *http.Client
+	sleep         func(ctx context.Context, d time.Duration) error
 }
 
 // CohereOption configures a CohereEmbedder.
@@ -46,6 +49,7 @@ func NewCohereEmbedder(apiKey string, opts ...CohereOption) *CohereEmbedder {
 		queryModel:    DefaultCohereQueryModel,
 		baseURL:       cohereDefaultBaseURL,
 		http:          &http.Client{Timeout: 60 * time.Second},
+		sleep:         sleepContext,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -75,6 +79,8 @@ type cohereErrorBody struct {
 type CohereAPIError struct {
 	StatusCode int
 	Message    string
+	// RetryAfter is the wait Cohere asked for, if it said.
+	RetryAfter time.Duration
 }
 
 func (e *CohereAPIError) Error() string {
@@ -111,7 +117,43 @@ func (e *CohereEmbedder) Embed(ctx context.Context, texts []string, kind Kind) (
 	return vectors, nil
 }
 
+// Trial keys allow 100,000 tokens a minute, so a large repo is paced: wait out a 429 and retry.
+const (
+	maxRateLimitRetries  = 4
+	defaultRateLimitWait = 20 * time.Second
+	maxRateLimitWait     = 70 * time.Second
+)
+
+// call sends one batch, waiting and retrying when Cohere rate limits it.
 func (e *CohereEmbedder) call(ctx context.Context, body cohereRequest) ([][]float32, error) {
+	for attempt := 0; ; attempt++ {
+		vectors, err := e.send(ctx, body)
+		var apiErr *CohereAPIError
+		if err == nil || !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusTooManyRequests || attempt >= maxRateLimitRetries {
+			return vectors, err
+		}
+		wait := defaultRateLimitWait
+		if apiErr.RetryAfter > 0 {
+			wait = min(apiErr.RetryAfter, maxRateLimitWait)
+		}
+		if sleepErr := e.sleep(ctx, wait); sleepErr != nil {
+			return nil, sleepErr
+		}
+	}
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func (e *CohereEmbedder) send(ctx context.Context, body cohereRequest) ([][]float32, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
@@ -136,7 +178,11 @@ func (e *CohereEmbedder) call(ctx context.Context, body cohereRequest) ([][]floa
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		var errBody cohereErrorBody
 		_ = json.Unmarshal(respBody, &errBody) // best-effort; the status code is what matters
-		return nil, &CohereAPIError{StatusCode: resp.StatusCode, Message: errBody.Message}
+		apiErr := &CohereAPIError{StatusCode: resp.StatusCode, Message: errBody.Message}
+		if secs, err := strconv.ParseFloat(resp.Header.Get("Retry-After"), 64); err == nil && secs > 0 {
+			apiErr.RetryAfter = time.Duration(secs * float64(time.Second))
+		}
+		return nil, apiErr
 	}
 	var result cohereResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {

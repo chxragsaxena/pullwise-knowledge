@@ -58,7 +58,7 @@ func run() error {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      2 * time.Minute, // indexing a repo embeds many chunks
+		WriteTimeout:      6 * time.Minute, // indexing embeds many chunks and may wait out rate limits
 		IdleTimeout:       60 * time.Second,
 	}
 
