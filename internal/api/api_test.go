@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -190,6 +191,41 @@ func TestRoutesNeedTheRightToken(t *testing.T) {
 	}
 	if len(h.st.calls) != 0 || h.em.calls != 0 {
 		t.Fatal("a rejected request reached the store or the embedding provider")
+	}
+}
+
+func TestFilesMayArriveAsBase64ForCallersBehindAFirewall(t *testing.T) {
+	text := "curl -v http://localhost:3333/ <example>/main.go\n"
+	enc := base64.StdEncoding.EncodeToString([]byte(text))
+	h := newHarness(t)
+
+	body := `{"repo":"o/r","ref":"abc","files":[{"path":"README.md","contentBase64":"` + enc + `"}]}`
+	if rec := h.do("POST", "/v1/index", body, token(t, "u1", auth.ScopeIndex)); rec.Code != 200 {
+		t.Fatalf("index = %d %s", rec.Code, rec.Body.String())
+	}
+	stored := h.st.repos["u1"]["o/r"]
+	if len(stored) == 0 || !strings.Contains(stored[0].Content, "curl -v http://localhost:3333/") {
+		t.Fatalf("stored chunks = %+v, want the decoded text", stored)
+	}
+
+	for name, bad := range map[string]string{
+		"not base64": `{"repo":"o/r","ref":"abc","files":[{"path":"a.md","contentBase64":"%%%"}]}`,
+		"both given": `{"repo":"o/r","ref":"abc","files":[{"path":"a.md","content":"x","contentBase64":"` + enc + `"}]}`,
+	} {
+		rec := newHarness(t).do("POST", "/v1/index", bad, token(t, "u1", auth.ScopeIndex))
+		if rec.Code != 400 || errorCode(t, rec) != "invalid_request" {
+			t.Errorf("%s: %d %s, want 400 invalid_request", name, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestADecodedFileIsHeldToTheSizeLimit(t *testing.T) {
+	h := newHarness(t)
+	big := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("x", maxFileBytes+1)))
+	body := `{"repo":"o/r","ref":"abc","files":[{"path":"a.go","contentBase64":"` + big + `"}]}`
+	rec := h.do("POST", "/v1/index", body, token(t, "u1", auth.ScopeIndex))
+	if rec.Code != 413 || errorCode(t, rec) != "too_large" {
+		t.Fatalf("%d %s, want 413 too_large", rec.Code, rec.Body.String())
 	}
 }
 

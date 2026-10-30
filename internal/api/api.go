@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -101,9 +102,27 @@ type indexRequest struct {
 	Files []fileInput `json:"files"`
 }
 
+// fileInput carries a file's text as content, or base64 in contentBase64 for callers behind a web
+// firewall that blocks plain source code. Send one of the two.
 type fileInput struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path          string `json:"path"`
+	Content       string `json:"content"`
+	ContentBase64 string `json:"contentBase64"`
+}
+
+// text returns the file's text, decoding contentBase64 if that is what was sent.
+func (f fileInput) text() (string, error) {
+	if f.ContentBase64 == "" {
+		return f.Content, nil
+	}
+	if f.Content != "" {
+		return "", errors.New("send content or contentBase64, not both")
+	}
+	data, err := base64.StdEncoding.DecodeString(f.ContentBase64)
+	if err != nil {
+		return "", fmt.Errorf("contentBase64 is not valid base64: %w", err)
+	}
+	return string(data), nil
 }
 
 type indexResponse struct {
@@ -148,11 +167,16 @@ func (a *API) indexRepo(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", `Every file needs a "path" of up to 500 characters.`)
 			return
 		}
-		if len(f.Content) > maxFileBytes {
+		content, err := f.text()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("%s: %v.", f.Path, err))
+			return
+		}
+		if len(content) > maxFileBytes {
 			writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("%s is larger than %d bytes.", f.Path, maxFileBytes))
 			return
 		}
-		chunks = append(chunks, chunk.Split(f.Path, f.Content)...)
+		chunks = append(chunks, chunk.Split(f.Path, content)...)
 		if len(chunks) > maxChunks {
 			writeError(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("The files make more than %d chunks.", maxChunks))
 			return
