@@ -188,20 +188,23 @@ const vectorOnlySQL = `
 
 // hybridSQL fuses the vector ranking and the keyword ranking with reciprocal rank fusion.
 // Both lists are filtered to the tenant and repo before ranking; score stays the cosine similarity.
-// The 60 in the fusion is the usual reciprocal-rank constant.
+// The 60 in the fusion is the usual reciprocal-rank constant. Each list is cut to its best candidates first and
+// numbered afterwards: numbering inside the same query ranks every row of the repository before the LIMIT.
 const hybridSQL = `
 	WITH vec AS (
-		SELECT id, row_number() OVER (ORDER BY embedding <=> $3::vector) AS r
-		FROM chunks
-		WHERE tenant = $1 AND repo = $2 AND NOT (path = ANY($5::text[]))
-		ORDER BY embedding <=> $3::vector
-		LIMIT $6),
+		SELECT id, row_number() OVER (ORDER BY d) AS r
+		FROM (SELECT id, embedding <=> $3::vector AS d
+		      FROM chunks
+		      WHERE tenant = $1 AND repo = $2 AND NOT (path = ANY($5::text[]))
+		      ORDER BY d
+		      LIMIT $6) v),
 	txt AS (
-		SELECT id, row_number() OVER (ORDER BY ts_rank_cd(search, q) DESC, id) AS r
-		FROM chunks, to_tsquery('simple', $7) q
-		WHERE tenant = $1 AND repo = $2 AND NOT (path = ANY($5::text[])) AND search @@ q
-		ORDER BY ts_rank_cd(search, q) DESC, id
-		LIMIT $6),
+		SELECT id, row_number() OVER (ORDER BY rank DESC, id) AS r
+		FROM (SELECT id, ts_rank_cd(search, q) AS rank
+		      FROM chunks, to_tsquery('simple', $7) q
+		      WHERE tenant = $1 AND repo = $2 AND NOT (path = ANY($5::text[])) AND search @@ q
+		      ORDER BY rank DESC, id
+		      LIMIT $6) t),
 	fused AS (
 		SELECT id, sum(1.0 / (60 + r)) AS rrf
 		FROM (SELECT id, r FROM vec UNION ALL SELECT id, r FROM txt) u
